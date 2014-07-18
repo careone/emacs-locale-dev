@@ -1,0 +1,1558 @@
+#! /bin/bash
+## coding: utf-8
+## translate tool of Emacs/XEmacs menu language
+## original filename: emacs-locale-dev
+#
+## author: Careone <emacslocale@126.com>
+## last updated: 2014-07-18
+## todo: translate for XEmacs
+
+VERSION='16.0'
+
+## ---- 1: debug switches ----
+DEBUG=1 	#1: output debug info, 0: no output
+
+## -----------------------
+
+### defines ###
+## ---- part 2: base defines ----
+NAMEU='Emacs' #Name upcase
+NAMEL='emacs' #Name lowercase. IMPORTANT string !!!
+#
+#NAMEU='XEmacs' 
+#NAMEL='xemacs'  
+
+prefix="/usr/local/share"
+EL_DIR="$prefix/${NAMEL}-locale"
+ELD_DIR="$prefix/${NAMEL}-locale-dev"
+
+TRANSOF="${NAMEL}-locale" #directory name
+DEVOF="${NAMEL}-locale-dev"
+PROGNAME=`basename -- "$0"`
+
+## ---- part 3: optional modules, for some special lisp files ----
+#ENABLE_EL_BIN="1"	#disabled in 2014-7-13
+#ENABLE_ELD_BIN="1"	#disabled
+ENABLE_HOTSET="1" #enable hot settings such as linum, column-number-mode, ...
+
+# suffix for filename
+LOCKSUFFIX="LOCK"	#suffix for filename in translating or downloading
+TRANSUFFIX="TRANSLATING"	#suffix for .el lisp files in translating
+DOWNSUFFIX="DOWNLOADING"	#suffix for files in downloading
+
+# array defines
+declare -a EVERS_ORIG	#multi Emacs/XEmacs version strings
+declare -a EVERS	#all accepted Emacs/XEmacs versions
+declare -a EVERS_VOID	#unaccepted Emacs/XEmacs versions	
+
+## other defines
+WIN_SITE_START='site-start.el' #optional filename: site-start.el, default.el
+
+MARK_UTF8="; -*- coding: utf-8 -*-" #string
+MARK_UTF8_NBCT="; -*- coding: utf-8; no-byte-compile: t -*-" #string
+
+## ---- part 4: fixed defines ----
+
+case "$NAMEL" in
+	emacs)
+## for bin/emacs-locale
+# LLANG: lowercase of ELANG. exmaple: zh_CN (ELANG) -> zh-cn (LLANG)
+LLANG=`echo "$ELANG" | cut -d'.' -f1 | tr "A-Z" "a-z" | sed 's/_/-/g'`
+
+# LOAD_LANG: source of site-lisp/LANG/lisp/language/loadlang-{lang}.el
+# notice: this file auto genrated by bin/emacs-locale-dev
+# I hope that them will be builtin files of Emacs in future
+LOADLANG="/usr/share/emacs/$EVER/lisp/language/loadlang-${LLANG}.el"
+	;;
+
+  	xemacs):
+	#todo
+	;;
+
+	*) 
+echo "  Error: void setting of '\$NAMEL' (should be 'emacs' or 'xemacs')."
+echo "Abort."
+	exit 0;
+	;;
+esac
+
+### part 5. HELP INFORMATIONS ### 
+## tag: ICONV_FROM=''
+## default set to 'utf-8'
+## means: skip 'iconv', just add utf-8 tag to file head 
+#
+## 1. for some .el files, need set 'ICONV_FROM' to 
+## iso-8859-*/iso-2022-*/... 
+## to use 'iconv' to convert coding to utf-8 and then translate.
+## you can run 'head *.el' and 'file *.el' to test and file codings
+## ...
+## ---------------------
+
+## LOAD_MODE settings: load, autoload or not-work
+## * load:
+##     	force load translated .el files. 
+##     	such as: menu-bar.el, international/mule-cmds.el ...
+#
+## * autoload
+##  	some files should be autoload, such as: dired.el, org.el ...
+#
+## * not-work
+## 	some files not work for unknown reason, such as:
+## 	lisp/bookmark.el
+## ...
+
+# tag L160: REPLACE & ICONV
+## optional switches: 
+# ENABLE_UNIX_REPLACE='1'
+# ENABLE_WIN_REPLACE='1'
+#ENABLE_WIN_ICONV='0' #optional for XEmacs (function code not write yet)
+#
+## the above switches most used for:
+## * replace Emacs 24.1-24.3 lisp/menu-bar.el
+##   with 23.4 translated to work well 
+## * replace Emacs 23.2-24.3 lisp/international/mule-cmds.el
+##   with 23.1 translated to work well 
+
+## translated .el files save to:
+## * Emacs for Linux/Unix/BSD:
+## UNIX_TRANSED_EL='~/emacs-locale/usr/share/emacs/{VER}/site-lisp/{LANG}/lisp/*/*.el'
+## UNIX_SITE_START='~/emacs-locale/etc/emacs{MAJOR_VER}/site-start.d/86emacs-locale.el'
+#
+## * Emacs for Windows:
+## WIN_TRANSED_EL='~/emacs-locale/windows/emacs-{VER}/lisp/{lang_LANG}/*/*.el'
+## WIN_SITE_START='~/emacs-locale/windows/emacs-xx.x/lisp/{lang_LANG}/site-start.el'
+
+### -------------- translate related Variables end--------------
+
+# Usage: usage
+# Print the usage.
+# ----
+usage () {
+    cat <<EOF
+Usage: $PROGNAME [OPTION]
+translate $NAMEU menu to special language(s), if translate scripts existed.
+
+usage:    $PROGNAME -l LANGUAGE -v VERSION
+examples: $PROGNAME -l zh_CN -v 24.3
+          $PROGNAME -l zh_CN -v 22.3 24.3
+          $PROGNAME -l zh_CN zh_TW -v 22.3 24.3
+
+Develop/Translate related
+  --list        list available translate scripts for current language
+  -d, --download VERSION_1 [VERSION2 ...]
+    download $NAMEU source lisp .el packages from internet. 
+    If no version given, probe and use current $NAMEU version installed.
+  -x, --extract VERSION_1 [VERSION_2 ...]
+    check downloaded $NAMEU source lisp packages in special directoies, 
+    and extract all .el files in lisp/ directories.
+    If no version given, probe and use current $NAMEU version installed.
+
+  -l LANGUAGE_1 [LANGUAGE_2 ...]
+    with -v, translate $NAMEU lisp/*/*.el files to special language(s)
+  -v [VERSION1 VERSION2 ...]
+    with -l, translate $NAMEU lisp/*/*.el files to special version(s). If
+    no VERSION given, try probe and use $NAMEU version installed.
+
+Misc
+  --ereg VERSION_1 [VERSION_2 ...]
+    creat registry files for special Windows $NAMEU versions
+
+  --swap
+    swap CapsLock and Ctrl_L for current user and current session, and
+    run again to reset swapped keys to normal.
+  --rkey, --reset-keymap
+    (User) restore key map for current user and current session
+
+  --todo           show todo features 
+  -V, --version    print the version information and exit
+  -h, --help       print this message and exit
+
+homepage: 
+https://sourceforge.net/projects/emacslocale/files/emacs-locale-dev/
+
+GitHub: https://github.com/careone/emacs-locale-dev
+
+Please report bugs to Careone <emacslocale@126.com>.
+EOF
+}
+
+usage_zh_CN () {
+    cat <<EOF
+用法: $PROGNAME [选项]
+翻译 $NAMEU 菜单为指定语言（如果有相应语言的翻译脚本）
+
+用法: $PROGNAME -l 语言 -v 版本
+示例: $PROGNAME -l zh_CN -v 24.3
+      $PROGNAME -l zh_CN -v 22.3 24.3
+      $PROGNAME -l zh_CN zh_TW -v 22.3 24.3
+
+开发/翻译相关
+  --list        列出适用当前语言环境的翻译脚本文件清单
+  -d, --download 版本1 [版本2 ...]
+       从网络上下载指定版本的 $NAMEU lisp 源码包。
+       如果未指定版本，则检测并使用当前已安装的 $NAMEU 版本
+
+  -x, --extract 版本1 [版本2 ...]
+       检测特定目录下已下载的指定版本的 $NAMEU lisp 源码包，解压缩并提取
+       lisp/ 文件夹下的所有 .el 文件
+       如果未指定版本，则检测并使用当前已安装的 Emacs 版本
+
+  -l 语言1 [语言2 ...]
+       配合 -v 选项使用，翻译 $NAMEU lisp/*/*.el 文件为指定语言
+  -v 版本1 [版本2 ...]
+       配合 -l 选项使用, 翻译指定版本的 $NAMEU lisp/*/*.el 文件
+       如果未指定版本，则检测并使用当前已安装的 $NAMEU 版本
+
+杂项
+  --ereg 版本1 [版本2 ...]
+       为指定版本的 $NAMEU 创建 Windows 注册表文件
+  -swap
+       在当前会话中交换大写锁(CapsLock)和左Ctrl键(Ctrl_L)。
+       再次运行可以还原为正常按键
+  -rkey, --reset-keymap
+       还原当前会话的按键为正常按键
+
+  --todo           显示待完成的功能
+  -V, --version    显示版本信息并退出
+  -h, --help       显示帮助信息并退出
+
+主页:
+https://sourceforge.net/projects/emacslocale/files/emacs-locale-dev/
+
+GitHub: https://github.com/careone/emacs-locale-dev
+
+请发送缺陷报告给 Careone <emacslocale@126.com>.
+EOF
+}
+# ====
+
+_todo () {
+cat <<EOF
+todo features
+      -a, --auto
+        (global) auto translate $NAMEU installed with current language 
+        environment (root please!)
+
+    -rm, --remove-language LANGS
+	 example: -rm zh_CN
+	 require root to run this option!
+	 if no language given, probe current env LANG
+
+EOF
+}
+
+### FUNCTION DEFINES for MESSAGE OUTPUT
+_echo_done () {
+	echo " Done."
+	}
+
+_error_not_found () {
+	echo "Error: files/directories void or not found. skip."
+	}
+
+_error_not_installed () {
+	echo "Error: files/directories void or not installled. skip."
+	}
+
+_errorBadOPT () {
+cat <<EOF
+  Error: bad arguments, or arguments not enough.
+  Please run "$0 -h" for help.
+EOF
+}
+
+### extra functions for Emacs Windows
+_makeWinReg () {
+cat <<EOF
+Windows Registry Editor Version 5.00
+
+[HKEY_LOCAL_MACHINE\SOFTWARE\GNU]
+
+[HKEY_LOCAL_MACHINE\SOFTWARE\GNU\\$NAMEU]
+"HOME"="D:\\\\$NAMEL-$EVER"
+
+[HKEY_CLASSES_ROOT\.el]
+@="el_auto_file"
+
+[HKEY_CLASSES_ROOT\el_auto_file]
+@=""
+
+[HKEY_CLASSES_ROOT\el_auto_file\shell]
+@=""
+
+[HKEY_CLASSES_ROOT\el_auto_file\shell\open]
+@=""
+
+[HKEY_CLASSES_ROOT\el_auto_file\shell\open\command]
+@="D:\\\\$NAMEL-$EVER\\\\bin\\\\$CLIENT_WIN -n -a \"D:\\\\$NAMEL-$EVER\\\\bin\\\\$RUNEMACS\" \"%1\""
+
+[HKEY_CLASSES_ROOT\*\shell\Open with $NAMEU]
+@="Open with $NAMEU $EVER"
+
+[HKEY_CLASSES_ROOT\*\shell\Open with $NAMEU\command]
+@="D:\\\\$NAMEL-$EVER\\\\bin\\\\$CLIENT_WIN -n -a \"D:\\\\$NAMEL-$EVER\\\\bin\\\\$RUNEMACS\" \"%1\""
+
+[HKEY_CLASSES_ROOT\AllFilesystemObjects\shell\Open With $NAMEU]
+@="D:\\\\$NAMEL-$EVER\\\\bin\\\\$CLIENT_WIN -n -a \"D:\\\\$NAMEL-$EVER\\\\bin\\\\$RUNEMACS\" \"%1\""
+
+[HKEY_CLASSES_ROOT\AllFilesystemObjects\shell\Open With $NAMEU\command]
+@="D:\\\\$NAMEL-$EVER\\\\bin\\\\$CLIENT_WIN -n -a \"D:\\\\$NAMEL-$EVER\\\\bin\\\\$RUNEMACS\" \"%1\""
+EOF
+}
+
+_makeWinUnreg () {
+cat <<EOF
+Windows Registry Editor Version 5.00
+
+[-HKEY_LOCAL_MACHINE\SOFTWARE\GNU\\$NAMEU]
+
+[-HKEY_CLASSES_ROOT\.el]
+
+[-HKEY_CLASSES_ROOT\el_auto_file]
+
+[-HKEY_CLASSES_ROOT\*\shell\Open with $NAMEU]
+
+[-HKEY_CLASSES_ROOT\AllFilesystemObjects\shell\Open With $NAMEU]
+EOF
+}
+
+### extra functions end
+
+## PART 2: main
+# Check the arguments.
+
+## ------------------------------------
+## arraies and variables for options: -gl, -l ,-v
+#    declare -a ARRAY_GL
+#    declare -a ARRAY_L
+#    declare -a ARRAY_V
+#    declare -a ARGS
+# 
+# 	OPT_GL 	//value: 1=true, 0=faluse
+# 	OPT_L 	//value: 2=true, 0=faluse
+# 	OPT_V  	//value: 4=true, 0=faluse
+# 	VALUE_TRANS 	//value: = OPT_GL + OPT_L + OPT_V
+## ----------
+
+# Check the arguments.
+      if [ "$#" -eq 0 ];then
+	exit 0
+      fi	
+
+ARG="$@"
+
+# probe language argument
+# CLANG: Current LANG in command 'env'
+CLANG=`echo "$LANG" | cut -d'.' -f1`
+
+for option in "$@"; do
+    case "$option" in
+    -h | --help)
+ 	  if "usage_$CLANG" 2>/dev/null &>/dev/null; then
+	    "usage_$CLANG"
+	  else usage
+	  fi
+	exit 0 ;;
+
+	## ============================
+
+	## hidden option, not list in option --help
+	## translating related options for: --id, -gl, -l, -v
+	--id)	#,fuzzy and todo
+	    case "$2" in
+		-*)shift ;; #For case in number missing, example: --id -l zh_CN -v 24.3
+		*[^0-9]*)ID=1; shift 2 ;;
+		[0-9]*)ID="$2"; shift 2 ;;
+		*)ID=1; shift 2 ;;
+	    esac
+	    if [ "$DEBUG" = 1 ]; then
+		echo -e "L370: ID = '$ID'\n"
+	    fi
+		 ;;
+
+	## --------------------------------
+   	--list)
+	#list available translate scripts in '$BINPATH' ..."
+	echo "list available translate scripts..."
+
+	echo "  current LANG: `echo $LANG | cut -d'.' -f1`"
+	if [ -z "$BINPATH" ];then
+	  BINPATH="$ELD_DIR/$CLANG/bin"
+        fi
+
+	[[ `echo $LANG | cut -d'.' -f1` != "$CLANG" ]] && { echo "  Notice: you can used LANG '$CLANG' instead" ; }
+	echo "  (script path: \`$BINPATH/')"
+	echo
+	declare -a BINS=( `ls -1 "$BINPATH"/*.sh "$BINPATH"/*.sh.* 2>/dev/null` )
+	
+	if [ "$DEBUG" = 1 ];then
+	  echo " ---------- "
+	  TAG=L320
+	  echo "tag $TAG"
+	  echo "#BINS[@] = '${#BINS[@]}'"
+
+	  ID1=1
+	  echo "array of BINS:"
+	  echo " ...... "
+	  for x in "${BINS[@]}"; do
+	    echo "$ID1* $x"
+	    let "ID1 += 1"
+	  done
+
+	  echo -e " ========== \n"
+	fi
+
+	ID=1
+	for SCRIPT in "${BINS[@]}";do
+	  BINVER=`grep ^"VERSION" "$SCRIPT" 2>/dev/null | head -1 | sed "/^VERSION=/s///;/'/s///g;/\"/s///g" | cut -d' ' -f1`
+	  ## if script is a symbolic link, we need cut and ignore some info
+
+  echo -e "$ID* `ls -l --time-style=long-iso --color=auto "$SCRIPT" 2>/dev/null`\t(VERSION: $BINVER)" | sed '/\//s//\n\//'
+	if [ ! -x "$SCRIPT" ]; then
+	  echo -e "    [IGNORED]: NOT executable for current USER '`whoami`'!"
+	else echo
+	fi
+	let "ID += 1"
+	done
+  	
+     	exit 0      ;;
+
+## --------------------------------
+## creat emacs-xx.x.reg and emacs-unreg.reg registry files for Windows Emacs
+
+    	--ereg)
+	#usage: --ereg VERSION1 VERSION2 ...
+	#if no version given, probe and use installed version
+	ARG="$1"
+	ID=1	#init
+
+	echo -e "* creat Registry files for special Windows $NAMEU versions...\n"
+	shift
+	#----------
+    	## get Emacs version strings from input. if no version given, 
+	#  probe and use current installed version
+	if [ "$#" -ge 1 ]; then
+	  EVERS_ORIG=( "$@" )
+	else
+	  if which "$NAMEL" &>/dev/null;then
+	    #for emacs:
+	    CVER=`${NAMEL} --version 2>/dev/null | head -1 | cut -d' ' -f3 | cut -d'.' -f1-2`
+	    #	
+	    #for xemacs, TODO
+	    #CVER=`${NAMEL} -q -V -no-site-file | cut -d ' ' -f2 | cut -d '.' -f1-2`
+
+	    EVERS_ORIG=( "$CVER" )
+	    echo "  Notice: no version given, and found $NAMEU $CVER installed. "
+	  fi
+	fi
+
+	for EVER in "${EVERS_ORIG[@]}"; do
+	case "$EVER" in
+	[0-9]*.*)	#accepted Emacs Version strings
+	  if [ "${#EVERS[@]}" -eq 0 ]; then
+	    EVERS=( "$EVER" )
+	  else
+	    EVERS=( "${EVERS[@]}" "$EVER" )
+	  fi
+	  ;;
+	[0-9]*):
+	  echo "  Error: version \`$EVER': please type an $NAMEU version number like XX.X" 1>&2
+	  if [ "${#EVERS_BAD[@]}" -eq 0 ]; then
+	    EVERS_BAD=( "$EVER" )
+	  else
+	    EVERS_BAD=( "${EVERS_BAD[@]}" "$EVER" )
+	  fi
+	  ;;
+	[^0-9]* | * | "")
+	  #echo "  Warning: unaccepted/void $NAMEU version number '$b'. Skip" 1>&2
+	  if [ "${#EVERS_BAD[@]}" -eq 0 ]; then
+	    EVERS_BAD=( "$EVER" )
+	  else
+	    EVERS_BAD=( "${EVERS_BAD[@]}" "$EVER" )
+	  fi
+	  ;;
+	esac
+  	done
+
+	# sort and unique version strings
+	EVERS=( `echo "${EVERS[@]}" | sed '/\ /s//\n/g' | sort | uniq` )
+	# --------------
+	if [ "$DEBUG" = 1 ];then
+	  echo " ------- "
+	  TAG=L470
+	  echo "tag $TAG"
+	  echo "EVERS_ORIG=( "${EVERS_ORIG[@]}" )"
+	  echo "EVERS_BAD=( "${EVERS_BAD[@]}" )"
+	  echo "EVERS=( "${EVERS[@]}" )"
+	  echo " ======= "
+	fi	
+	# ==============
+
+	# --------------
+	if [ "${#EVERS_BAD[@]}" -ge 1 ]; then
+	  echo "  Ignored $NAMEU version(s): ${EVERS_BAD[@]}"
+	fi
+
+	echo "  Available $NAMEU version(s): ${EVERS[@]}"
+	if [ "${#EVERS[@]}" -eq 0 ]; then
+	  echo -e "  nothing to do. exit\n"
+	  exit 0
+	fi
+	# ==============
+
+	echo
+
+	for EVER in "${EVERS[@]}"; do
+	  echo "** $ID* creat registry files for Windows $NAMEU $EVER ..."
+	  echo "  (save to: $HOME/.$TRANSOF/windows/${NAMEL}-${EVER}/reg/*.reg)"
+	  echo
+
+	  if [ ! -d "$HOME/.$TRANSOF/windows/${NAMEL}-${EVER}/reg/" ]; then
+	    mkdir -p "$HOME/.$TRANSOF/windows/${NAMEL}-${EVER}/reg/"
+	  fi
+
+	## convert .reg files coding from Unix utf-8 to Windows Unicode 
+	## (utf-16le-with-signature-dos)
+	#
+	## sed "s/$/`echo -e \\\r`/"
+	## equals: unix2dos (convert Unix LF new line symbol to DOS CRLF)
+	#
+	## iconv -f utf-8 -t utf-16le
+
+	echo -ne "\xff\xfe" > "$HOME/.$TRANSOF/windows/${NAMEL}-${EVER}/reg/${NAMEL}-${EVER}.reg"
+	echo -ne "\xff\xfe" > "$HOME/.$TRANSOF/windows/${NAMEL}-${EVER}/reg/${NAMEL}-unreg.reg"
+
+_makeWinReg | sed "s/$/`echo -e \\\r`/" | iconv -f utf-8 -t utf-16le >> "$HOME/.$TRANSOF/windows/${NAMEL}-${EVER}/reg/${NAMEL}-${EVER}.reg"
+_makeWinUnreg | sed "s/$/`echo -e \\\r`/" | iconv -f utf-8 -t utf-16le >> "$HOME/.$TRANSOF/windows/${NAMEL}-${EVER}/reg/${NAMEL}-unreg.reg"
+  	  if [ "$?" = 0 ]; then
+	    echo "Done."
+  	  fi
+	let "ID += 1"
+	echo
+	done
+
+	exit 0;
+		;;
+
+
+#--------
+# ,fuzzy and todo
+  -gl)
+    declare -a ARRAY_GL
+	OPT_GL="1" #1 means true, 0 means false
+
+    if [ "$#" -eq 1 ]; then
+	  shift
+
+    else shift
+	case "$1" in
+	    --* | -*): ;; 
+	    *)
+	unset ARGS[@] #init array to null
+	ARGS=( `echo "$@" | sed "s/ -/\n -/" | head -1` )
+
+  	if [ "${#ARGS[@]}" -ge 1 ];then 
+	# If argument like "-gl -gl zh_CN", throw the first -gl
+ 	  if [ "${#ARRAY_GL[@]}" -ge 1 ];then 
+	    ARRAY_GL=( "${ARRAY_GL[@]}" "${ARGS[@]}" )
+	  else ARRAY_GL="${ARGS[@]}"
+	  fi
+	  shift "${#ARGS[@]}"	
+#	echo "ARRAY_GL = '${ARRAY_GL[@]}'"
+	fi	;;
+	esac
+   fi 
+	;;
+
+# ,fuzzy end
+
+  -l)
+    declare -a ARRAY_L
+	OPT_L="2" #2 means true, 0 means false
+
+    if [ "$#" -eq 1 ]; then
+	  shift
+
+    else shift
+	case "$1" in
+	    --* | -*): ;; 
+	    *)
+	unset ARGS[@] #init array to null
+	ARGS=( `echo "$@" | sed "s/ -/\n -/" | head -1` )
+
+  	if [ "${#ARGS[@]}" -ge 1 ];then 
+	# If argument like "-l -l zh_CN", throw the first -l
+ 	  if [ "${#ARRAY_L[@]}" -ge 1 ];then 
+	    ARRAY_L=( "${ARRAY_L[@]}" "${ARGS[@]}" )
+	  else ARRAY_L="${ARGS[@]}"
+	  fi
+	  shift "${#ARGS[@]}"	
+	echo "ARRAY_L = '${ARRAY_L[@]}'"
+	fi	;;
+	esac
+   fi 
+	;;
+
+  -v)
+    declare -a ARRAY_V
+	OPT_V="4" #4 means true, 0 means false
+
+    if [ "$#" -eq 1 ]; then
+	  shift
+
+    else shift
+	case "$1" in
+	    --* | -*): ;; 
+	    *)
+	unset ARGS[@] #init array to null
+	ARGS=( `echo "$@" | sed "s/ -/\n -/" | head -1` )
+
+  	if [ "${#ARGS[@]}" -ge 1 ];then 
+	# If argument like "-v -v 24.3", throw the first -v
+ 	  if [ "${#ARRAY_V[@]}" -ge 1 ];then 
+	    ARRAY_V=( "${ARRAY_V[@]}" "${ARGS[@]}" )
+	  else ARRAY_V="${ARGS[@]}"
+	  fi
+	  shift "${#ARGS[@]}"	
+	echo "ARRAY_V = '${ARRAY_V[@]}'"
+	fi	;;
+	esac
+   fi 
+	;;
+	  
+   --swap)
+## to show current key maps, please type command "xmodmap -pke"
+
+	echo "(User) swap CapsLock and Ctrl_L for current user and current session..."
+	echo "  (for current user and current login only."
+	echo "  you can run '$0 -$1' again to reset key map to normal)"
+
+if ! which xmodmap &>/dev/null; then
+	echo "  Error: xmodmap not found, or not executable." 1>&2
+	echo "  Please install 'x11-xserver-utils' first! Quit." 1>&2
+	exit 0;
+else
+
+## define: swap Caps_Lock and Control_L
+_keySwap () {
+cat <<EOF
+remove Lock = Caps_Lock
+remove Control = Control_L
+keysym Control_L = Caps_Lock
+keysym Caps_Lock = Control_L
+add Lock = Caps_Lock
+add Control = Control_L
+EOF
+}
+
+# method 1:
+#	_keySwap >> ~/.xmodmap.swap
+#	xmodmap ~/.xmodmap.swap
+#
+# method 2:
+	_keySwap | xmodmap -
+  if [ "$?" = 0 ]; then
+	_echo_done
+  fi
+
+fi
+shift
+	 ;;
+
+   --rkey | --reset-keymap)
+	echo "(User) restore key map for current user and current session..."
+
+if ! which xmodmap &>/dev/null; then
+	echo "  Error: xmodmap not found, or not executable." 1>&2
+	echo "  Please install 'x11-xserver-utils' first! Quit." 1>&2
+	exit 0;
+else
+## define: reset key map
+_keyReset () {
+cat <<EOF
+remove Lock = Caps_Lock
+remove Control = Control_L
+keycode  37 = Control_L NoSymbol Control_L
+keycode  66 = Caps_Lock NoSymbol Caps_Lock
+add Lock = Caps_Lock
+add Control = Control_L
+EOF
+}
+
+_keyReset | xmodmap -
+
+  if [ "$?" = 0 ]; then
+	_echo_done
+  fi
+fi
+shift
+	 ;;
+
+#---------------------
+   -a | --auto)
+OPT_AUTO=8
+
+### auto translate installed Emacs/XEmacs version for current language environment
+# usage: --auto
+   echo "* (Global) auto translate installed $NAMEU for current language environment..."
+    [ `whoami` = "root" ] || { echo "root please"; exit 0; }
+
+## probe installed version
+#	CVER="" #init
+	if ! which "$NAMEL" &>/dev/null;then
+	  echo "Error: $NAMEL maybe not installed, or void. quit."
+	  exit 0
+
+	else
+
+  	 case "$NAMEL" in
+	    emacs)
+	CVER=`${NAMEL} --version 2>/dev/null | head -1 | cut -d' ' -f3 | cut -d'.' -f1-2`
+		;;
+	    xemacs)
+	CVER=`${NAMEL} -q -V -no-site-file | cut -d ' ' -f2 | cut -d '.' -f1-2`
+		;;
+	    *) #others: same as 'emacs'
+	CVER=`${NAMEL} --version 2>/dev/null | head -1 | cut -d' ' -f3 | cut -d'.' -f1-2`
+		;;
+	  esac
+	  echo "  found: $NAMEU $CVER installed."
+
+
+  case "$CLANG" in
+    en_* | en*)
+      echo "  Notice: current LANG '$CLANG' not need translate. Abort." 1>&2
+      echo -n "  maybe you need to run with special LANG:" 1>&2
+      echo " '-gl LANGUAGE'" 1>&2
+      exit 0
+	shift
+#	continue
+	;;
+     *): ;;
+  esac	
+	fi
+
+## invoke -gl and -v option to translate, 
+## andtranslated lisp files availbe for all users
+"$0" -gl "$CLANG" -v "$CVER"
+
+shift
+exit 0;
+;;
+
+# ============
+
+   	-d | --download) 
+	ARG="$1"
+	ID=1	#init
+	#usage: -d version1 version2 ...
+
+	echo -e "downloading $NAMEU source lisp package(s)...\n"
+	echo -e "  check $NAMEU version(s) frist..."
+
+    	## get Emacs version strings from input. if no version given, 
+	#  probe and use current installed version
+	shift
+	if [ "$#" -ge 1 ]; then
+	  EVERS_ORIG=( "$@" )
+	else
+	  if which "$NAMEL" &>/dev/null;then
+	    #for emacs:
+	    CVER=`${NAMEL} --version 2>/dev/null | head -1 | cut -d' ' -f3 | cut -d'.' -f1-2`
+	    #	
+	    #for xemacs, TODO
+	    #CVER=`${NAMEL} -q -V -no-site-file | cut -d ' ' -f2 | cut -d '.' -f1-2`
+
+	    EVERS_ORIG=( "$CVER" )
+	    echo "  Notice: no version given, and found $NAMEU $CVER installed. "
+	  fi
+	fi
+
+	for EVER in "${EVERS_ORIG[@]}"; do
+	case "$EVER" in
+	[0-9]*.*)	#accepted Emacs Version strings
+	  if [ "${#EVERS[@]}" -eq 0 ]; then
+	    EVERS=( "$EVER" )
+	  else
+	    EVERS=( "${EVERS[@]}" "$EVER" )
+	  fi
+	  ;;
+	[0-9]*):
+	  echo "  Error: version \`$EVER': please type an $NAMEU version number like XX.X" 1>&2
+	  if [ "${#EVERS_BAD[@]}" -eq 0 ]; then
+	    EVERS_BAD=( "$EVER" )
+	  else
+	    EVERS_BAD=( "${EVERS_BAD[@]}" "$EVER" )
+	  fi
+	  ;;
+	[^0-9]* | * | "")
+	  #echo "  Warning: unaccepted/void $NAMEU version number '$b'. Skip" 1>&2
+	  if [ "${#EVERS_BAD[@]}" -eq 0 ]; then
+	    EVERS_BAD=( "$EVER" )
+	  else
+	    EVERS_BAD=( "${EVERS_BAD[@]}" "$EVER" )
+	  fi
+	  ;;
+	esac
+  	done
+
+	# sort and unique version strings
+	EVERS=( `echo "${EVERS[@]}" | sed '/\ /s//\n/g' | sort | uniq` )
+	# --------------
+	if [ "$DEBUG" = 1 ];then
+	  echo " ------- "
+	  TAG=L720
+	  echo "tag $TAG"
+	  echo "EVERS_ORIG=( "${EVERS_ORIG[@]}" )"
+	  echo "EVERS_BAD=( "${EVERS_BAD[@]}" )"
+	  echo "EVERS=( "${EVERS[@]}" )"
+	  echo " ======= "
+	fi	
+	# ==============
+
+	# --------------
+	if [ "${#EVERS_BAD[@]}" -ge 1 ]; then
+	  echo "  Ignored $NAMEU version(s): ${EVERS_BAD[@]}"
+	fi
+
+	echo "  Available $NAMEU version(s): ${EVERS[@]}"
+	if [ "${#EVERS[@]}" -eq 0 ]; then
+	  echo -e "  nothing to do. exit\n"
+	  exit 0
+	fi
+	# ==============
+
+	## select a random mirror web to download source .el packages
+	X="$(($RANDOM % 8))"
+
+	if [ "$DEBUG" = 1 ]; then
+	  echo "tag 700 RANDOM = $RANDOM, X = $X"
+	fi
+### mirrors ###
+# GNU Emacs homepage:
+# http://ftp.gnu.org/pub/gnu/emacs
+#
+# China mirrors for Emacs
+# http://mirror.bjtu.edu.cn/gnu/emacs
+# http://mirrors.ustc.edu.cn/gnu/emacs
+#
+# Taiwan mirrors
+# http://ftp.twaren.net/Unix/GNU/gnu/emacs
+# ftp://ftp.twaren.net/Unix/GNU/gnu/emacs
+#
+# Japan mirrors
+# ftp://ftp.ring.gr.jp/pub/GNU/emacs
+# http://core.ring.gr.jp/pub/GNU/emacs
+# http://ftp.jaist.ac.jp/pub/GNU/emacs
+#
+# lastest beta Emacs version:
+# NOTICE: 
+# * this URL not fit for this script file because different directory path
+# ftp://alpha.gnu.org/gnu/emacs
+#
+# ---- you can download OLDER Emacs source packages from: ----
+# ftp://ftp.ntu.edu.tw/gnu/emacs/
+# emacs-21.4a.tar.gz
+# emacs-22.1.tar.gz
+# emacs-22.2.tar.gz
+# ==== old end ====
+
+	case "$X" in
+	1 | 2)
+	  WEBPATH="http://ftp.gnu.org/pub/gnu/emacs"
+	  ;;
+	3 | 4)
+ 	  WEBPATH="http://mirror.bjtu.edu.cn/gnu/emacs"
+	  ;;
+	5 | 6)
+	  WEBPATH="http://mirrors.ustc.edu.cn/gnu/emacs"
+	  ;;
+	7 | 0 | *)
+	  WEBPATH="http://core.ring.gr.jp/pub/GNU/emacs"
+	  ;;
+	esac
+	# source package named like: emacs-24.3.tar.gz 
+
+	## ---------------------
+	#  start downloading now
+	echo "* (User) download $NAMEU source lisp .el packages..."
+	echo -e "  select a random mirror to download: $WEBPATH\n"
+	for EVER in "${EVERS[@]}"; do
+	  # filt void version numbers
+	  case "$EVER" in
+	[0-9]*.*)
+	## adjust special Emacs package names to download: since Emacs 21-24
+	#emacs-21.4a.tar.gz for Emacs 21.4
+	#emacs-23.2b.tar.gz for Emacs 23.2 
+	#emacs-23.3b.tar.gz for Emacs 23.3
+
+		case "$EVER" in
+		  21.4)EVER="${EVER}a" ;;
+		  23.2 | 23.3)EVER="${EVER}b" ;;
+		  *): ;;
+		esac
+	  ;;
+
+	*)
+	  echo "** Error: unrecognized $NAMEU version number: '$EVER' . Skip." 1>&2
+	  continue
+	  ;;
+  	esac
+
+	MVER=`echo "$EVER" | cut -d'.' -f1` 
+
+	SAVETO_DIR="$HOME/.$TRANSOF/src"
+	if [ ! -d "$SAVETO_DIR" ]; then
+	  mkdir -p "$SAVETO_DIR"
+	fi
+
+  	echo -e "\n** $ID* downloading '${NAMEL}-${EVER}.tar.gz' (save to ~/.$TRANSOF/src/ )...\n"
+
+  	cd "$SAVETO_DIR"
+
+	# -------------------
+  	if [ -e "$SAVETO_DIR/$NAMEL-$EVER.$LOCKSUFFIX" ];then
+	  echo "  Warnning: found lock file '$NAMEL-$EVER.$LOCKSUFFIX'!"
+	  echo "  (Maybe package in downloading by another program.)"
+	  echo -n "  Skip downloading. (If you want to re-download it, please remove"
+	  echo " '$NAMEL-$EVER.$LOCKSUFFIX' lock file frist!)"
+	else touch "$SAVETO_DIR/$NAMEL-$EVER.$LOCKSUFFIX"
+	  touch "$SAVETO_DIR/$NAMEL-$EVER.$DOWNSUFFIX"
+
+	## ---- if progress interrupted, remove LOCK file
+		trap "{
+         	  rm -f "$SAVETO_DIR/$NAMEL-$EVER.$LOCKSUFFIX" 2>/dev/null
+		  #break ;
+		  exit 1 ;
+     			}" HUP INT QUIT TERM EXIT
+	## ====
+
+      LANG=en_US wget -c "$WEBPATH/${NAMEL}-${EVER}.tar.gz" -O "$SAVETO_DIR/${NAMEL}-${EVER}.tar.gz" && { rm -f "$SAVETO_DIR/$NAMEL-$EVER.$DOWNSUFFIX" ; rm -f "$SAVETO_DIR/$NAMEL-$EVER.$LOCKSUFFIX" ; } 
+
+  	fi
+	# ===================
+	let "ID += 1"
+      done
+
+	exit 0	;;
+
+#,fuzzy 2013-11-10 ,todo
+    -rm |--remove-language)
+	# usage: -rm zh_CN
+	# require root to run this option!
+	# if no language given, probe current env LANG
+echo "* (Global) remove $NAMEU translation files of special language..."
+[ `whoami` = "root" ] || { echo "root please"; exit 0; }
+
+# check Emacs/XEmacs installed or not
+  if which "$NAMEL" &>/dev/null;then
+	 case "$NAMEL" in
+	    emacs)
+	CVER=`${NAMEL} --version 2>/dev/null | head -1 | cut -d' ' -f3 | cut -d'.' -f1-2`
+		;;
+	    xemacs)
+	CVER=`${NAMEL} -q -V -no-site-file | cut -d ' ' -f2 | cut -d '.' -f1-2`
+		;;
+	    *)#same as 'emacs'
+	CVER=`${NAMEL} --version 2>/dev/null | head -1 | cut -d' ' -f3 | cut -d'.' -f1-2`
+		;;
+	  esac
+  else echo "  Error: $NAMEU not installed. Abort." 1>&2
+	exit 0
+  fi
+
+
+  	declare -a ELANGS
+  	SHIFT_N=0 #init
+  	ARG="$1"
+	shift
+
+  if [ "$#" -ge 1 ]; then
+# get language arguments and ignore void 
+  for a in "$@"; do
+    case "$a" in
+      -*)
+# command 1: -rm	#if no option followed, code jump to "else" in tag 1900
+# command 2: -rm -h	#with more options followed, jump to following lines
+	if [ "${#ELANGS[@]}" -eq 0 ]; then
+	  echo "  (Notice: no language given, use current LANG '$CLANG')"
+    	  ELANGS="$CLANG"
+	fi
+	break ;;
+
+  #if inputed LANG is English, do nothing;
+  #if not input LANG and current LANG is English, ignore it in next codes
+      en_* | en*)
+     	echo "  Notice: nothing to do on LANG '$a'. Ignore." 1>&2
+	let "SHIFT_N += 1"
+     	continue	  ;;
+     [a-zA-Z]*)
+	if [ "${#ELANGS[@]}" -ge 1 ]; then
+     	  ELANGS=( "${ELANGS[@]}" "$a" )
+	else
+     	  ELANGS="$a"
+	fi
+	let "SHIFT_N += 1"
+     	continue	  ;;
+
+     [0-9]* |*)
+     	echo "  Unrecognized language '$a'. Ignore." 1>&2
+     	let "SHIFT_N += 1"
+     	continue	  ;;
+    esac
+  done
+  else #if [ "$#" -eq 0 ]
+#    tag 1900
+    echo "  (Notice: no language given, use current LANG '$CLANG')"
+    ELANGS=( "$CLANG" ) 
+  fi
+#------------------------
+
+## do now
+  for ELANG in "${ELANGS[@]}"; do
+echo
+  echo "** (Global) removing $NAMEU $CVER '$ELANG' translation files..."
+
+  case "$ELANG" in
+  #if no LANG inputed and CLANG (Current LANG) used is English, do nothing
+   en_* | en*)
+     echo "  Notice: nothing to do on LANG '$ELANG'. Ignore." 1>&2
+      	;;
+   [a-zA-Z]*)
+	if [ ! -d "/usr/share/$NAMEL/$CVER/site-lisp.d/" ]; then
+	  mkdir -p "/usr/share/$NAMEL/$CVER/site-lisp.d/"
+	fi
+
+	if [ ! -d "/usr/share/$NAMEL/$CVER/site-lisp/$ELANG/" ]; then
+	  echo "  Error: no available '$ELANG' translation file found. Ignore." 1>&2
+	elif [ -d "/usr/share/$NAMEL/$CVER/site-lisp/$ELANG/" ] && [ -d "/usr/share/$NAMEL/$CVER/site-lisp.d/" ]; then
+	  mv -f "/usr/share/$NAMEL/$CVER/site-lisp/$ELANG" "/usr/share/$NAMEL/$CVER/site-lisp.d/"
+	  if [ "$?" = 0 ]; then
+	    echo "  Done."
+	  fi
+	else
+# if [ -d "/usr/share/$NAMEL/$CVER/site-lisp/$ELANG/" ] && [ ! -d "/usr/share/$NAMEL/$CVER/site-lisp.d/" ]; then
+	  echo "  Error: directory '/usr/share/$NAMEL/$CVER/site-lisp.d/$ELANG/' operate failed. Ignore." 1>&2
+	fi
+	echo ;;
+
+
+   -* | ""): ;;
+	esac
+
+	  if [ "$SHIFT_N" -ge 1 ]; then
+	    shift "$SHIFT_N"
+	  else :
+	  fi
+	
+done
+
+	#-------------------
+	if [ "$DEBUG" = 1 ]; then
+	  echo "------------"
+	  echo "tag 1906"
+	  echo "CLANG = '$CLANG'"
+	  echo "ELANGS = '${ELANGS[@]}'"
+	  echo " #ELANGS = '${#ELANGS[@]}'"
+	  echo "------------"
+	echo
+	fi	;;
+
+
+    --todo)
+	_todo
+	exit 0 ;;
+
+	-x | --extract)
+	ARG="$1"
+	# usage: -x VERSIONS
+	# example: -x 22.3 24.3 
+	## extract downloaded Emacs source lisp packages, which may named as
+	# emacs-23.3b.tar.gz
+	# downloaded packages may saved in ~/.emacs-locale/src/
+	# full path and example filename:  ~/.emacs-locale/src/emacs-23.3b.tar.gz
+	# extract to: (notice: not 'emacs-23.3b', no letter b included)
+	#   ~/.emacs-locale/src/emacs-23.3/lisp/*/*.el
+
+	SAVETO_DIR="$HOME/.$TRANSOF/src"	#example: ~/.emacs-locale/src/
+
+	echo "* extract downloaded $NAMEU source lisp packages..."
+	echo -e "  (source path: '$SAVETO_DIR/')\n"
+
+  	if [ ! -d "$SAVETO_DIR" ];then
+	  echo -n "  Error: no any $NAMEU source package found in special" 1>&2
+	  echo " directory \`~/.$TRANSOF/src/'. quit." 1>&2
+	  echo -ne "  TIPS: you can run\n$PROGNAME -d\nto auto download"
+	  echo " source lisp package for installed $NAMEU version"
+	  exit 0
+  	fi
+
+	echo -e "  check $NAMEU version(s) frist..."
+
+    	## get Emacs version strings from input. if no version given, 
+	#  probe and use current installed version
+	shift
+	if [ "$#" -ge 1 ]; then
+	  EVERS_ORIG=( "$@" )
+	else
+	  if which "$NAMEL" &>/dev/null;then
+	    #for emacs:
+	    CVER=`${NAMEL} --version 2>/dev/null | head -1 | cut -d' ' -f3 | cut -d'.' -f1-2`
+	    #	
+	    #for xemacs, TODO
+	    #CVER=`${NAMEL} -q -V -no-site-file | cut -d ' ' -f2 | cut -d '.' -f1-2`
+
+	    EVERS_ORIG=( "$CVER" )
+	    echo "  Notice: no version given, and found $NAMEU $CVER installed. "
+	  fi
+	fi
+	
+  	## remove void Emacs version strings which inputed by mistake
+	unset EVERS	#init
+
+	for EVER in "${EVERS_ORIG[@]}"; do
+	case "$EVER" in
+	[0-9]*.*)	#accepted Emacs Version strings
+	  if [ "${#EVERS[@]}" -eq 0 ]; then
+	    EVERS=( "$EVER" )
+	  else
+	    EVERS=( "${EVERS[@]}" "$EVER" )
+	  fi
+	  ;;
+	[0-9]*):
+	  echo "  Error: version \`$EVER': please type an $NAMEU version number like XX.X" 1>&2
+	  if [ "${#EVERS_BAD[@]}" -eq 0 ]; then
+	    EVERS_BAD=( "$EVER" )
+	  else
+	    EVERS_BAD=( "${EVERS_BAD[@]}" "$EVER" )
+	  fi
+	  ;;
+	[^0-9]* | * | "")
+	  #echo "  Warning: unaccepted/void $NAMEU version number '$b'. Skip" 1>&2
+	  if [ "${#EVERS_BAD[@]}" -eq 0 ]; then
+	    EVERS_BAD=( "$EVER" )
+	  else
+	    EVERS_BAD=( "${EVERS_BAD[@]}" "$EVER" )
+	  fi
+	  ;;
+	esac
+  	done
+
+	# sort and unique version strings
+	EVERS=( `echo "${EVERS[@]}" | sed '/\ /s//\n/g' | sort | uniq` )
+	# --------------
+	if [ "$DEBUG" = 1 ];then
+	  echo " ------- "
+	  TAG=L1090
+	  echo "tag $TAG"
+	  echo "EVERS_ORIG=( "${EVERS_ORIG[@]}" )"
+	  echo "EVERS_BAD=( "${EVERS_BAD[@]}" )"
+	  echo "EVERS=( "${EVERS[@]}" )"
+	  echo " ======= "
+	fi	
+	# ==============
+
+	# --------------
+	if [ "${#EVERS_BAD[@]}" -ge 1 ]; then
+	  echo "  Ignored $NAMEU version(s): ${EVERS_BAD[@]}"
+	fi
+	echo "  Available $NAMEU version(s): ${EVERS[@]}"
+	if [ "${#EVERS[@]}" -eq 0 ]; then
+	  echo -e "  nothing to do. exit\n"
+	  exit 0
+	fi
+	# ==============
+
+	# start extracting
+	ID=1	#init
+	for EVER in "${EVERS[@]}"; do
+	## adjust special Emacs package names to download: since Emacs 21-24
+	#emacs-21.4a.tar.gz for Emacs 21.4
+	#emacs-23.2b.tar.gz for Emacs 23.2 
+	#emacs-23.3b.tar.gz for Emacs 23.3
+
+	  # NOTICE: for some special Emacs source package versions:
+	  # such as Emacs 21.4a, 23.2b, 23.3b
+	  # for example:
+	  #   emacs-21.4a.tar.gz (with letter 'a')
+	  # after unzip, the directories are ~/.emacs-locale/emacs-21.4/lisp/*
+	  #   notice: is '21.4', not '21.4a'
+	  #remove letters in version string, keep number and dot only
+	  #
+	  ## EVER_NUMBER_ONLY: pure number include . and 0-9 only
+		case "$EVER" in
+		  21.4)EVER_NUMBER_ONLY="$EVER"; EVER="${EVER}a" ;;
+		  23.2 | 23.3)EVER_NUMBER_ONLY="$EVER"; EVER="${EVER}b" ;;
+		  *)EVER_NUMBER_ONLY="$EVER" ;;
+		esac
+
+  	  echo -e "\n** $ID* Extract lisp/*/*.el in source package '${NAMEL}-${EVER}.tar.gz' ..."
+  	  echo -e "  (to ~/.$TRANSOF/src/ )\n"
+
+	  if [ "$DEBUG" = 1 ]; then
+	    echo -e "\ttag L1120: EVER_NUMBER_ONLY = '$EVER_NUMBER_ONLY'"
+	    #continue
+	  fi
+
+  	if [ ! -d "$SAVETO_DIR" ];then
+	  mkdir -p "$SAVETO_DIR/"
+  	fi
+
+	## gzip -cd SRC.gz > ~/emacs-xx.x/lisp/$APPDIR/$APP.el
+	#touch "$SAVETO_DIRGOOD_SRC.$NAMEL-$EVER"
+
+	TEST_EL="menu-bar.el"		#for Emacs
+	TEST_ELGZ="menu-bar.el.gz"	#for Emacs
+	#TEST_EL="menubar-items.el"		#for XEmacs, todo
+	#TEST_ELGZ="menubar-items.el.gz"	#for XEmacs, todo
+
+  	if [ -r "$SAVETO_DIR/${NAMEL}-${EVER}.tar.gz" ]; then
+	  echo "  Found: source package '${NAMEL}-${EVER}.tar.gz'"
+
+	  # ----
+	  ## check source lisp file existed or not, 
+	  #  or package already extracted or not
+	  if [ -e "$SAVETO_DIR/$NAMEL-${EVER_NUMBER_ONLY}/lisp/$TEST_EL" ];then
+	    echo -e "  Found: $TEST_EL\t(in $SAVETO_DIR/$NAMEL-${EVER_NUMBER_ONLY}/lisp/)\n"
+	    echo "  Notice: maybe source package already extracted. skip" 1>&2
+
+	  elif [ -e "$SAVETO_DIR/$NAMEL-${EVER_NUMBER_ONLY}/lisp/$TEST_ELGZ" ];then
+	    echo -e "  Found: $TEST_ELGZ\t(in $SAVETO_DIR/$NAMEL-${EVER_NUMBER_ONLY}/lisp/)\n"
+	    echo "  Notice: maybe source package already extracted. skip" 1>&2
+
+	  else	#now start extracting
+	    ## tar -k : keep existed files, not replace
+	    echo "  Ready to extract..."
+
+  	    cd "$SAVETO_DIR"
+
+	    # --------
+	    # !!! tag L1080: ,fuzzy and todo:
+	    #
+	    # if emacs-XX.X.tar.gz package broken or bad and can't extracted with tar, 
+	    # how to stop tar exactcting and goto next loop?
+	    # ---
+    	    #if tar -zxf "$SAVETO_DIR/${NAMEL}-${EVER}.tar.gz" "$NAMEL-${EVER_NUMBER_ONLY}/lisp" -k 2>/dev/null; then
+	    #  echo "  Error: package '$NAMEL-$EVER.tar.gz' may be broken or void. Skip." 1>&2
+	    #  continue;
+	    #else
+	    # ========
+
+    	    tar -zxf "$SAVETO_DIR/${NAMEL}-${EVER}.tar.gz" "$NAMEL-${EVER_NUMBER_ONLY}/lisp" -k 2>/dev/null
+    	    rm -f "$SAVETO_DIR/${NAMEL}-${EVER_NUMBER_ONLY}/lisp"/*.elc
+    	    rm -f "$SAVETO_DIR/${NAMEL}-${EVER_NUMBER_ONLY}/lisp"/*/*.elc
+
+	    if [ "$?" = 0 ]; then
+	      echo "  Done."
+	    fi
+	    # --------
+	    #fi #tag L1080 closed
+	    # ========
+	  fi
+	  # ====
+
+	else echo -n "  Error: not available '$NAMEL-$EVER.tar.gz' found,"
+  	  echo " or file void. Skip."
+	  echo -ne "  TIPS: you can run '$PROGNAME -d' to auto download"
+	  echo " source lisp package for installed $NAMEU version"
+  	fi
+
+	echo
+	let "ID += 1"
+	done
+	## ================
+	exit 0 ;;
+
+    -V | --version)
+	basename -- "$0 $VERSION"
+	#echo "$0 $VERSION"
+	exit 0 ;;
+
+    -*)
+	echo "Unrecognized option \`$option'" 1>&2
+	exit 1;;
+    esac
+
+done
+
+##--------------------------
+## now start translating
+
+  case "$CLANG" in
+    en_* | en*)
+      echo "  Notice: current LANG '$CLANG' not need translate. Abort." 1>&2
+      echo -n "  you can run '-lv LANGUAGE -v VERSION' as root to translate"
+      echo " special $NAMEU version to special language."
+	;;
+     *): ;;
+  esac	
+
+	if [ -z "$OPT_GL" ];then
+	  OPT_GL=0 #1 means true, 0 means false
+	fi
+	if [ -z "$OPT_L" ];then
+	  OPT_L=0 #2 means true, 0 means false
+	fi
+	if [ -z "$OPT_V" ];then
+	  OPT_V=0 #4 means true, 0 means false
+	fi
+
+#
+	if [ -z "$OPT_AUTO" ];then
+	  OPT_AUTO=0 #for option --auto only. 8 means true, 0 means false; 
+	fi
+
+	let "VALUE_TRANS = OPT_GL + OPT_L + OPT_V + OPT_AUTO"
+	case "$VALUE_TRANS" in
+	  1 | 2 | 4)_errorBadOPT 1>&2 ;;
+	  3 | 7)echo -n "  ERROR: both options -gl and -l found, and can't decide" 1>&2
+		echo " do which one. please choose one of them and retry." 1>&2 ;;
+	  5)
+	echo "(Global) Ready to translate..." 
+		[ `whoami` = "root" ] || { echo "root please"; exit 0; }
+# number 5 means: -gl LANGUAGE -v VERSION
+  if [ "${#GLANGS[@]}" -eq 0 ];then
+    GLANGS="CLANG"
+  fi
+
+  if [ "${#ELANGS[@]}" -eq 0 ];then
+    ELANGS="CLANG"
+  fi
+
+  if [ "${#EVERS[@]}" -eq 0 ];then
+    EVERS="CVER"
+  fi
+
+for BIN in "${OKBINS[@]}"; do
+  if [ -z "$ID" ];then
+    ID=1
+  fi
+  "$BIN" --id "$ID" -gl ${ELANGS[@]} -v ${EVERS[@]}
+done
+	exit 0
+	;;
+
+	  6)
+# number 6 means: -l LANGUAGE -v VERSION
+ echo "Ready to translate..."
+  if [ "${#GLANGS[@]}" -eq 0 ];then
+    GLANGS="CLANG"
+  fi
+
+  if [ "${#ELANGS[@]}" -eq 0 ];then
+    ELANGS="CLANG"
+  fi
+
+  if [ "${#EVERS[@]}" -eq 0 ];then
+    EVERS="CVER"
+  fi
+
+for BIN in "${OKBINS[@]}"; do
+  if [ -z "$ID" ];then
+    ID=1
+  fi
+  "$BIN" --id "$ID" -l ${ELANGS[@]} -v ${EVERS[@]}
+done
+	exit 0;
+ 	;;
+
+	  0 | *): ;;
+	esac	
+#
+	if [ "$DEBUG" = 1 ];then
+	  echo "----"
+	  echo "L1920"
+	  echo "ARRAY_GL = '${ARRAY_GL[@]}'"
+	  echo "ARRAY_L = '${ARRAY_L[@]}'"
+	  echo "ARRAY_V = '${ARRAY_V[@]}'"
+	  #echo "VALUE_TRANS = $VALUE_TRANS"
+	fi
+
+# -----------------------------
+## ------------------------------- 
+
+# hiden option: --id NUMBER: with -l, -v
+# set step 'ID' begins from NUMBER, null means 1
+# example: 
+# normal command:  $0 -l zh_CN -v 24.3
+# command with special id: $0 --id 101 -l zh_CN -v 24.3
+#-------------------------
+
+##-------------------
+## todo: add lockfile
+lockfile="$HOME/$TRANSOF/LOCK"
+## todo end
+##-------------------
+
+ makeHeader () {
+## $ARG: original "$@" without shifted
+#
+#  echo "Command: $0 $@"
+#  echo "Command: $0 $ARG"
+  echo "User: `whoami`"
+  echo "Uid:  $UID"
+  echo "Ppid: $PPID"
+  echo "Date begin: $(date +"%Y-%m-%d %H:%M:%S %z")" 
+#  echo
+}
+
+### record log messages
+#
+## sample log file for Emacs: ~/emacs-locale/emacs-locale.log.$PPID
+## Notice: if command run by two or more users with the same log name, may 
+## cause unknown errors when write to log file.
+## now log file which named with $PPID tag for different threads.
+
+# ----------------------------
+### if log file size greater than 512K, rename to *.log.last
+LOGDIR="$HOME/$DEVOF"
+LOG_FILE="$LOGDIR/${DEVOF}.log"
+LOG_LIMIT="524288" #max size of log file: 524288 = 1024*512 byte = 512K
+
+  if [ ! -d "$LOGDIR/" ]; then
+    mkdir -p "$LOGDIR/"
+  fi
+
+  if [ ! -e "$LOG_FILE" ];then
+    touch "$LOG_FILE"
+  fi
+
+LOG_SIZE=`stat -c %s "$LOG_FILE"`
+
+  if [ -s "$LOG_FILE" ] && [ "$LOG_SIZE" -ge "$LOG_LIMIT" ];then
+    mv -f "$LOG_FILE" "${LOG_FILE}.last" &>/dev/null
+  fi
+
+  echo "Cmd: `pwd`/$0 $ARG" >> "$LOG_FILE"
+  makeHeader >> "$LOG_FILE"
+  echo >> "$LOG_FILE"
+
+### MAKE_HEADER end ###
+
+## --------------------------
+## tag L2010
+## EVER: Emacs/XEmacs version, such as Emacs 24.1, XEmacs 21.5.31
+## MVER: Emacs/XEmacs major version, such as Emacs 24, XEmacs 21
+#
+## CVER: Current installed Emacs/XEmacs version
+
+## probe installed version
+	CVER="" #init
+	if which "$NAMEL" &>/dev/null;then
+  	 case "$NAMEL" in
+	    emacs)
+	CVER=`${NAMEL} --version 2>/dev/null | head -1 | cut -d' ' -f3 | cut -d'.' -f1-2`
+		;;
+	    xemacs)
+	CVER=`${NAMEL} -q -V -no-site-file | cut -d ' ' -f2 | cut -d '.' -f1-2`
+		;;
+	    *) #default: same as emacs
+	CVER=`${NAMEL} --version 2>/dev/null | head -1 | cut -d' ' -f3 | cut -d'.' -f1-2`
+		;;
+	  esac
+	  echo "  found: $NAMEU $CVER installed."
+
+	fi
+
+	EVER="$CVER"
+	echo "  Notice: no version given, and found $NAMEU $EVER installed. "
+  	MVER=`echo "$EVER" | cut -d'.' -f1` 
+	ELANG="$CLANG"
+
+	## check and invoke translation scripts
+  echo "** check available translate script(s)..."
+
+	## source 1: emacs-locale-dev/LANG/bin/*.sh
+	if [ -d "$ELD_DIR/$ELANG/bin/" ]; then
+	  cd $ELD_DIR/$ELANG/bin/
+	# 2>/dev/null: not output error message if no file found when use 'ls'
+	  declare -a BINS=( `ls *.sh 2>/dev/null` )
+	  cd -
+	fi
+ 
+	if [ -z "$BINPATH" ];then
+	  BINPATH="$ELD_DIR/$CLANG/bin"
+        fi
+
+  if [ "${#BINS[@]}" -eq 0 ]; then
+    echo "  Notice: no available script found. abort." 1>&2
+    exit 0
+  fi
+
+  for SCRIPT in "${BINS[@]}"; do
+
+## step 1: probe version of translate script emacs-locale-dev/.../bin/*.sh
+	## if version number like '15.0' or "15.0", use sed to throw quotes
+	## BINVER: string of version number
+    BINVER=`grep -i "^VERSION=" "$ELD_DIR/$ELANG/bin/$SCRIPT" 2>/dev/null | head -1 | cut -d'=' -f2 | cut -d'.' -f1-2 | sed "s/'//g;s/\"//g"`
+##                                                        ^^^ 
+
+    if [ -x "$BINPATH/$SCRIPT" ] && [ -r "$BINPATH/$SCRIPT" ]; then
+	echo -ne '\E[1;32m'"  found: $ELD_DIR/$ELANG/bin/$SCRIPT"
+	tput sgr0; 
+	echo -e "\t(version: $BINVER)"
+    elif [ ! -x "$BINPATH/$SCRIPT" ] || [ ! -r "$BINPATH/$SCRIPT" ]; then
+	echo -ne '\E[1;31m'"  ignore: $ELD_DIR/$ELANG/bin/$SCRIPT"
+	tput sgr0;
+	echo -e" (version: $BINVER; no execute or read permission)"
+    else :
+	echo "  Error: unknown error for '$BINPATH/$SCRIPT'. abort." 1>&2
+	exit 1
+    fi	
+
+  echo
+  done
+
+
+## invoke translate scripts
+
+  if [ "${#GLANGS[@]}" -eq 0 ];then
+    GLANGS=( "CLANG" )
+  fi
+
+  if [ "${#ELANGS[@]}" -eq 0 ];then
+    ELANGS=( "CLANG" )
+  fi
+
+  if [ "${#EVERS[@]}" -eq 0 ];then
+    EVERS=( "CVER" )
+  fi
+
+#for SCRIPT in "${BINS[@]}"; do
+
+  if [ -z "$ID" ];then
+    ID=1
+  else let "ID += 20"	
+  fi
+
+if [ "$DEBUG" = 1 ];then
+  echo "ID = $ID"
+fi
+
+  "$SCRIPT" --id "$ID" -l ${ELANGS[@]} -v ${EVERS[@]}
+##--------------------------
+
+#done
+if [ "$DEBUG" = 1 ];then
+TAG="L1210"
+echo
+echo "----------"
+echo "$TAG"
+echo "ELANG = '$ELANG'"
+echo "EVER = '$EVER'"
+
+echo "CLANG = '$CLANG'"
+echo "CVER = '$CVER'"
+echo 
+echo "#BINS[@] = '${#BINPATH[@]}'"
+echo "BINS[@]  = '${BINPATH[@]}'"
+echo "----------"
+fi
+
+#-----------------------
+	exit 0 ;; 
+
+exit 0; 
+## check and extract lisp .el files from downloaded tar.gz packages and 
+# delete unecessary .elc files to save disk space
+
